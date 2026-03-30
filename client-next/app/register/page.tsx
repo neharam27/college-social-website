@@ -17,14 +17,28 @@ export default function RegisterPage() {
 
   const handleRegister = async () => {
     if (!name || !email || !password) { setError("Please fill in all fields"); return }
-    if (password.length < 6) { setError("Password must be at least 6 characters"); return }
+    if (!email.endsWith("@college.edu")) { setError("Only @college.edu email addresses are allowed"); return }
+    if (password.length < 8) { setError("Password must be at least 8 characters"); return }
+    if (!/[A-Z]/.test(password)) { setError("Password must contain at least one uppercase letter"); return }
+    if (!/[0-9]/.test(password)) { setError("Password must contain at least one number"); return }
     setLoading(true); setError("")
     try {
       await axios.post("http://localhost:5000/api/auth/register", { name, email, password, role })
       setSuccess(true)
-      setTimeout(() => router.push("/"), 2000)
-    } catch {
-      setError("Registration failed. This email may already be taken.")
+      setTimeout(() => router.push("/"), 3000)
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data
+        if (data?.errors?.length) {
+          setError(data.errors.map((e: { message: string }) => e.message).join(" · "))
+        } else if (data?.message) {
+          setError(data.message)
+        } else {
+          setError("Registration failed. Please try again.")
+        }
+      } else {
+        setError("Registration failed. Please try again.")
+      }
     } finally {
       setLoading(false)
     }
@@ -78,13 +92,14 @@ export default function RegisterPage() {
                 className="input-primary w-full px-4 py-3 border border-slate-200 rounded-xl bg-white/80 text-slate-900 text-sm"
                 onChange={e => setEmail(e.target.value)}
               />
+              <p className="text-xs text-slate-400 mt-1">Must end with <strong>@college.edu</strong></p>
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Password</label>
               <input
                 type="password"
                 value={password}
-                placeholder="Min. 6 characters"
+                placeholder="Min. 8 chars, 1 uppercase, 1 number"
                 className="input-primary w-full px-4 py-3 border border-slate-200 rounded-xl bg-white/80 text-slate-900 text-sm"
                 onChange={e => setPassword(e.target.value)}
               />

@@ -1,30 +1,50 @@
 -- =====================================================
 -- College Social — Database Migration Script
+-- MySQL 8.0 compatible
 -- Run this ONCE in your MySQL database: college_social
 -- =====================================================
 
+-- Helper: add columns only if they don't already exist
+DROP PROCEDURE IF EXISTS AddColIfMissing;
+DELIMITER $$
+CREATE PROCEDURE AddColIfMissing(
+  tbl VARCHAR(64), col VARCHAR(64), def TEXT
+)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = tbl
+      AND COLUMN_NAME  = col
+  ) THEN
+    SET @sql = CONCAT('ALTER TABLE `', tbl, '` ADD COLUMN `', col, '` ', def);
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  END IF;
+END$$
+DELIMITER ;
+
 -- 1. Add new columns to users table
-ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS club_id INT NULL,
-  ADD COLUMN IF NOT EXISTS status ENUM('active','suspended','deleted') DEFAULT 'active',
-  ADD COLUMN IF NOT EXISTS email_verified TINYINT(1) DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS totp_secret VARCHAR(255) NULL,
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+CALL AddColIfMissing('users', 'club_id',        'INT NULL');
+CALL AddColIfMissing('users', 'status',         "ENUM('active','suspended','deleted') DEFAULT 'active'");
+CALL AddColIfMissing('users', 'email_verified', 'TINYINT(1) DEFAULT 0');
+CALL AddColIfMissing('users', 'totp_secret',    'VARCHAR(255) NULL');
+CALL AddColIfMissing('users', 'updated_at',     'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
 -- 2. Add new columns to posts table
-ALTER TABLE posts
-  ADD COLUMN IF NOT EXISTS status ENUM('active','deleted') DEFAULT 'active',
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+CALL AddColIfMissing('posts', 'status',     "ENUM('active','deleted') DEFAULT 'active'");
+CALL AddColIfMissing('posts', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
 -- 3. Add new columns to comments table
-ALTER TABLE comments
-  ADD COLUMN IF NOT EXISTS status ENUM('active','deleted') DEFAULT 'active',
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+CALL AddColIfMissing('comments', 'status',     "ENUM('active','deleted') DEFAULT 'active'");
+CALL AddColIfMissing('comments', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
 -- 4. Add new columns to clubs table
-ALTER TABLE clubs
-  ADD COLUMN IF NOT EXISTS status ENUM('active','suspended','deleted') DEFAULT 'active',
-  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+CALL AddColIfMissing('clubs', 'status',     "ENUM('active','suspended','deleted') DEFAULT 'active'");
+CALL AddColIfMissing('clubs', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+
+DROP PROCEDURE IF EXISTS AddColIfMissing;
 
 -- 5. Refresh tokens table
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -68,11 +88,35 @@ CREATE TABLE IF NOT EXISTS email_verifications (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- 9. Performance indexes (ignore errors if they already exist)
-CREATE INDEX IF NOT EXISTS idx_posts_club_id        ON posts(club_id);
-CREATE INDEX IF NOT EXISTS idx_posts_status         ON posts(status);
-CREATE INDEX IF NOT EXISTS idx_comments_post_id     ON comments(post_id);
-CREATE INDEX IF NOT EXISTS idx_comments_status      ON comments(status);
-CREATE INDEX IF NOT EXISTS idx_followers_user_id    ON followers(user_id);
-CREATE INDEX IF NOT EXISTS idx_notifications_user   ON notifications(user_id);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_token ON refresh_tokens(token);
+-- 9. Performance indexes (safe — skipped if already exist)
+DROP PROCEDURE IF EXISTS CreateIndexIfMissing;
+DELIMITER $$
+CREATE PROCEDURE CreateIndexIfMissing(
+  tbl VARCHAR(64), idx VARCHAR(64), col VARCHAR(64)
+)
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME   = tbl
+      AND INDEX_NAME   = idx
+  ) THEN
+    SET @sql = CONCAT('CREATE INDEX `', idx, '` ON `', tbl, '`(`', col, '`)');
+    PREPARE stmt FROM @sql;
+    EXECUTE stmt;
+    DEALLOCATE PREPARE stmt;
+  END IF;
+END$$
+DELIMITER ;
+
+CALL CreateIndexIfMissing('posts',          'idx_posts_club_id',        'club_id');
+CALL CreateIndexIfMissing('posts',          'idx_posts_status',         'status');
+CALL CreateIndexIfMissing('comments',       'idx_comments_post_id',     'post_id');
+CALL CreateIndexIfMissing('comments',       'idx_comments_status',      'status');
+CALL CreateIndexIfMissing('followers',      'idx_followers_user_id',    'user_id');
+CALL CreateIndexIfMissing('notifications',  'idx_notifications_user',   'user_id');
+CALL CreateIndexIfMissing('refresh_tokens', 'idx_refresh_tokens_token', 'token');
+
+DROP PROCEDURE IF EXISTS CreateIndexIfMissing;
+
+SELECT 'Migration complete ✅' AS result;

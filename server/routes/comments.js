@@ -29,6 +29,28 @@ router.post(
         [post_id, user_id, comment],
         (err2, result) => {
           if (err2) return res.status(500).json({ message: "Failed to add comment" })
+
+          // Notify club admin
+          db.query(
+            `SELECT p.club_id, c.created_by AS admin_id, u.name AS commenter_name
+             FROM posts p
+             JOIN clubs c ON c.id = p.club_id
+             JOIN users u ON u.id = ?
+             WHERE p.id = ?`,
+            [user_id, post_id],
+            (err3, rows) => {
+              if (!err3 && rows.length > 0) {
+                const { admin_id, club_id, commenter_name } = rows[0]
+                if (admin_id !== user_id) {
+                  db.query(
+                    "INSERT INTO notifications (user_id, type, message, link) VALUES (?, 'comment', ?, ?)",
+                    [admin_id, `💬 ${commenter_name} commented on your post`, `/club/${club_id}`]
+                  )
+                }
+              }
+            }
+          )
+
           res.json({ message: "Comment added successfully 💬", commentId: result.insertId })
         }
       )

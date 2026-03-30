@@ -48,7 +48,7 @@ const requireClubOwnership = (req, res, next) => {
     return res.status(400).json({ message: "club_id is required" })
   }
 
-  if (req.user.club_id !== targetClubId) {
+  if (parseInt(req.user.club_id) !== targetClubId) {
     return res.status(403).json({
       message: "You can only manage your own club"
     })

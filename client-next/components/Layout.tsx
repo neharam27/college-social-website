@@ -2,8 +2,9 @@
 
 import { useRouter, usePathname } from "next/navigation"
 import { useEffect, useState } from "react"
-import axios from "axios"
 import Link from "next/link"
+import api from "@/lib/api"
+import { ThemeToggle } from "@/components/ThemeToggle"
 
 interface NavItem {
   href: string
@@ -30,20 +31,30 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const token = localStorage.getItem("token")
     if (!token) return
+
+    // First try the saved user object (has name)
     try {
-      const payload = JSON.parse(atob(token.split(".")[1]))
-      setRole(payload.role)
-      setName(payload.name || "")
+      const saved = localStorage.getItem("user")
+      if (saved) {
+        const u = JSON.parse(saved)
+        setName(u.name || "")
+        setRole(u.role || "")
+      } else {
+        // Fallback to JWT payload
+        const payload = JSON.parse(atob(token.split(".")[1]))
+        setRole(payload.role || "")
+      }
     } catch { /* ignore */ }
 
     // fetch unread count
-    axios.get("http://localhost:5000/api/notifications/unread-count", {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(r => setUnread(r.data.count)).catch(() => {})
+    api.get("/notifications/unread-count")
+      .then(r => setUnread(r.data.count)).catch(() => {})
   }, [pathname])
 
   const handleLogout = () => {
     localStorage.removeItem("token")
+    localStorage.removeItem("refreshToken")
+    localStorage.removeItem("user")
     router.push("/")
   }
 
@@ -94,7 +105,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </nav>
 
       {/* User footer */}
-      <div className="px-3 py-4 border-t border-slate-700/50 space-y-2">
+      <div className="px-3 pb-3 border-t border-slate-700/50 space-y-1 pt-3">
+        {/* Theme toggle */}
+        <ThemeToggle />
+
         <div className="flex items-center gap-3 px-3 py-2">
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
             {initials}

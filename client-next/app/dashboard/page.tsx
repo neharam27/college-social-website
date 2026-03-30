@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { formatDistanceToNow } from "date-fns"
 import axios from "axios"
+import api from "@/lib/api"
 import Layout from "@/components/Layout"
 import { toast } from "react-hot-toast"
 
@@ -15,52 +16,105 @@ interface Club { id: number; club_name: string }
 interface Comment { id: number; name: string; comment: string }
 
 export default function DashboardPage() {
-  const [posts,    setPosts]    = useState<Post[]>([])
-  const [comments, setComments] = useState<Record<number, Comment[]>>({})
-  const [clubs,    setClubs]    = useState<Club[]>([])
-  const [role,     setRole]     = useState("")
-  const [loading,  setLoading]  = useState(true)
+  const [posts,      setPosts]      = useState<Post[]>([])
+  const [comments,   setComments]   = useState<Record<number, Comment[]>>({})
+  const [clubs,      setClubs]      = useState<Club[]>([])
+  const [role,       setRole]       = useState("")
+  const [loading,    setLoading]    = useState(true)
   const [followedIds, setFollowedIds] = useState<number[]>([])
+  const [likedIds,   setLikedIds]   = useState<number[]>([])
   const router = useRouter()
 
-  const token = () => localStorage.getItem("token")
-  const auth  = () => ({ headers: { Authorization: `Bearer ${token()}` } })
+  // auth headers are handled automatically by the api interceptor
 
   const fetchAll = async () => {
+    // Load clubs (public — no auth needed)
+    axios.get("http://localhost:5000/api/clubs/all")
+      .then(r => setClubs(r.data))
+      .catch(() => {})
+
+    // Load followed club IDs (auto-refreshes token if expired)
     try {
-      const [postsRes, clubsRes, followedRes] = await Promise.all([
-        axios.get("http://localhost:5000/api/posts/feed",   auth()),
-        axios.get("http://localhost:5000/api/clubs/all"),
-        axios.get("http://localhost:5000/api/followers/my", auth()),
-      ])
-      setPosts(postsRes.data)
-      setClubs(clubsRes.data)
-      setFollowedIds(followedRes.data.map((f: { club_id: number }) => f.club_id))
-    } catch { /* silent */ }
-    finally { setLoading(false) }
+      const followedRes = await api.get("/followers/my")
+      const ids: number[] = followedRes.data.map((f: { club_id: number }) => f.club_id)
+      setFollowedIds(ids)
+
+      if (ids.length > 0) {
+        // Personalized feed
+        try {
+          const feedRes = await api.get("/posts/feed")
+          setPosts(feedRes.data)
+        } catch { setPosts([]) }
+      } else {
+        // Discovery feed — show all posts
+        try {
+          const allRes = await axios.get("http://localhost:5000/api/posts/all")
+          setPosts(allRes.data)
+        } catch { setPosts([]) }
+      }
+    } catch {
+      // Not logged in — show all posts publicly
+      try {
+        const allRes = await axios.get("http://localhost:5000/api/posts/all")
+        setPosts(allRes.data)
+      } catch { setPosts([]) }
+    }
+    // Also fetch which posts the user has already liked
+    api.get("/likes/my")
+      .then(r => { if (Array.isArray(r.data)) setLikedIds(r.data) })
+      .catch(() => {})
+
+    setLoading(false)
   }
 
   const handleLike = async (postId: number) => {
+    const alreadyLiked = likedIds.includes(postId)
+    // Optimistic update
+    if (alreadyLiked) {
+      setLikedIds(prev => prev.filter(id => id !== postId))
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: p.like_count - 1 } : p))
+    } else {
+      setLikedIds(prev => [...prev, postId])
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: p.like_count + 1 } : p))
+    }
     try {
-      await axios.post("http://localhost:5000/api/likes/like", { post_id: postId }, auth())
-      fetchAll()
-    } catch { toast.error("Already liked ❤️") }
+      if (alreadyLiked) {
+        await api.delete("/likes/unlike", { data: { post_id: postId } })
+      } else {
+        await api.post("/likes/like", { post_id: postId })
+      }
+    } catch {
+      // Revert optimistic update on failure
+      if (alreadyLiked) {
+        setLikedIds(prev => [...prev, postId])
+        setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: p.like_count + 1 } : p))
+      } else {
+        setLikedIds(prev => prev.filter(id => id !== postId))
+        setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: p.like_count - 1 } : p))
+      }
+    }
   }
   const handleFollow = async (clubId: number) => {
     try {
-      await axios.post("http://localhost:5000/api/followers/follow", { club_id: clubId }, auth())
-      toast.success("Following! 🎉"); fetchAll()
+      await api.post("/followers/follow", { club_id: clubId })
+      toast.success("Following! 🎉")
+      // Optimistically update state immediately
+      setFollowedIds(prev => [...prev, clubId])
+      fetchAll()
     } catch { toast.error("Already following") }
   }
   const handleUnfollow = async (clubId: number) => {
     try {
-      await axios.post("http://localhost:5000/api/followers/unfollow", { club_id: clubId }, auth())
-      toast.success("Unfollowed ❌"); fetchAll()
+      await api.post("/followers/unfollow", { club_id: clubId })
+      toast.success("Unfollowed ❌")
+      // Optimistically update state immediately
+      setFollowedIds(prev => prev.filter(id => id !== clubId))
+      fetchAll()
     } catch { toast.error("Error") }
   }
   const handleDelete = async (postId: number) => {
     try {
-      await axios.delete(`http://localhost:5000/api/posts/delete/${postId}`, auth())
+      await api.delete(`/posts/delete/${postId}`)
       toast.success("Post deleted 🗑️"); fetchAll()
     } catch { toast.error("Delete failed") }
   }
@@ -73,16 +127,22 @@ export default function DashboardPage() {
   const handleComment = async (postId: number, text: string) => {
     if (!text.trim()) return
     try {
-      await axios.post("http://localhost:5000/api/comments/add",
-        { post_id: postId, comment: text }, auth())
+      await api.post("/comments/add", { post_id: postId, comment: text })
       fetchComments(postId)
     } catch { /* silent */ }
   }
 
   useEffect(() => {
     fetchAll()
-    const t = token()
-    if (t) { try { const p = JSON.parse(atob(t.split(".")[1])); setRole(p.role) } catch { /* ignore */ } }
+    // Read role from saved user object (token() helper removed)
+    try {
+      const saved = localStorage.getItem("user")
+      if (saved) setRole(JSON.parse(saved).role || "")
+      else {
+        const t = localStorage.getItem("token")
+        if (t) setRole(JSON.parse(atob(t.split(".")[1])).role || "")
+      }
+    } catch { /* ignore */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -143,7 +203,9 @@ export default function DashboardPage() {
 
       {/* FEED */}
       <section className="animate-fadeInUp delay-100">
-        <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-4">Your Feed</h2>
+        <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-widest mb-4">
+          {followedIds.length > 0 ? "Your Feed" : "Discover Posts"}
+        </h2>
 
         {loading ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -198,9 +260,15 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-3 mt-4 pt-4 border-t border-slate-50">
                     <button
                       onClick={() => handleLike(post.id)}
-                      className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-pink-600 transition-colors font-medium"
+                      className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                        likedIds.includes(post.id)
+                          ? "text-pink-600 hover:text-slate-400"
+                          : "text-slate-400 hover:text-pink-600"
+                      }`}
+                      title={likedIds.includes(post.id) ? "Unlike" : "Like"}
                     >
-                      <span>❤️</span> {post.like_count}
+                      <span>{likedIds.includes(post.id) ? "❤️" : "🤍"}</span>
+                      {post.like_count}
                     </button>
                     <button
                       onClick={() => fetchComments(post.id)}

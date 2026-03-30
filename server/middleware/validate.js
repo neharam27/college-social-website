@@ -28,7 +28,12 @@ const validateRegister = [
     .trim()
     .notEmpty().withMessage("Email is required")
     .isEmail().withMessage("Must be a valid email address")
-    .normalizeEmail(),
+    .normalizeEmail()
+    .custom(val => {
+      if (!val.endsWith("@college.edu"))
+        throw new Error("Only @college.edu email addresses are allowed")
+      return true
+    }),
 
   body("password")
     .notEmpty().withMessage("Password is required")
@@ -49,7 +54,12 @@ const validateLogin = [
     .trim()
     .notEmpty().withMessage("Email is required")
     .isEmail().withMessage("Must be a valid email address")
-    .normalizeEmail(),
+    .normalizeEmail()
+    .custom(val => {
+      if (!val.endsWith("@college.edu"))
+        throw new Error("Only @college.edu email addresses are allowed")
+      return true
+    }),
 
   body("password")
     .notEmpty().withMessage("Password is required"),
