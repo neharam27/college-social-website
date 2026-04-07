@@ -15,7 +15,11 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { href: "/dashboard",    label: "Dashboard",    icon: "⊞" },
-  { href: "/create-post",  label: "Create Post",  icon: "✎", adminOnly: true },
+  { href: "/create-post",  label: "Create Post",  icon: "✎",  adminOnly: true },
+  { href: "/create-poll",  label: "Create Poll",  icon: "🗳️", adminOnly: true },
+  { href: "/leaderboard",  label: "Leaderboard",  icon: "🏆" },
+  { href: "/polls",        label: "Polls",        icon: "📊" },
+  { href: "/saved",        label: "Saved Posts",  icon: "📌" },
   { href: "/notifications",label: "Notifications",icon: "🔔" },
   { href: "/profile",      label: "Profile",      icon: "👤" },
 ]

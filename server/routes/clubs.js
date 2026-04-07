@@ -49,16 +49,50 @@ router.post(
 )
 
 // =====================================
-// GET ALL CLUBS (active only)
+// GET ALL CLUBS (active only, with follower count)
 // =====================================
 router.get("/all", (req, res) => {
   db.query(
-    "SELECT id, club_name, description, logo, created_at FROM clubs WHERE status = 'active'",
+    `SELECT c.id, c.club_name, c.description, c.logo, c.created_at,
+            COUNT(f.id) AS follower_count
+     FROM clubs c
+     LEFT JOIN followers f ON f.club_id = c.id
+     WHERE c.status = 'active'
+     GROUP BY c.id
+     ORDER BY c.club_name ASC`,
     (err, result) => {
       if (err) return res.status(500).json({ message: "Server error" })
       res.json(result)
     }
   )
+})
+
+// =====================================
+// GET LEADERBOARD (ranked by composite score)
+// =====================================
+router.get("/leaderboard", (req, res) => {
+  const query = `
+    SELECT
+      c.id, c.club_name, c.description, c.created_at,
+      COUNT(DISTINCT f.id)   AS follower_count,
+      COUNT(DISTINCT p.id)   AS post_count,
+      COALESCE(SUM(lc.like_count), 0) AS total_likes,
+      (COUNT(DISTINCT f.id) * 3 + COUNT(DISTINCT p.id) * 2 + COALESCE(SUM(lc.like_count), 0)) AS score
+    FROM clubs c
+    LEFT JOIN followers f   ON f.club_id = c.id
+    LEFT JOIN posts p       ON p.club_id = c.id AND p.status = 'active'
+    LEFT JOIN (
+      SELECT post_id, COUNT(*) AS like_count FROM likes GROUP BY post_id
+    ) lc ON lc.post_id = p.id
+    WHERE c.status = 'active'
+    GROUP BY c.id
+    ORDER BY score DESC
+    LIMIT 20
+  `
+  db.query(query, (err, result) => {
+    if (err) return res.status(500).json({ message: "Server error" })
+    res.json(result)
+  })
 })
 
 // =====================================

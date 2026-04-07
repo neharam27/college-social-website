@@ -92,10 +92,12 @@ router.get("/all", (req, res) => {
     SELECT
       posts.*,
       clubs.club_name,
-      COUNT(likes.id) AS like_count
+      COUNT(DISTINCT likes.id) AS like_count,
+      COUNT(DISTINCT c.id) AS comment_count
     FROM posts
     JOIN clubs ON posts.club_id = clubs.id
     LEFT JOIN likes ON posts.id = likes.post_id
+    LEFT JOIN comments c ON posts.id = c.post_id AND c.status = 'active'
     WHERE posts.status = 'active' AND clubs.status = 'active'
     GROUP BY posts.id
     ORDER BY posts.created_at DESC
@@ -115,10 +117,12 @@ router.get("/club/:id", (req, res) => {
     SELECT
       posts.*,
       clubs.club_name,
-      COUNT(likes.id) AS like_count
+      COUNT(DISTINCT likes.id) AS like_count,
+      COUNT(DISTINCT c.id) AS comment_count
     FROM posts
     JOIN clubs ON posts.club_id = clubs.id
     LEFT JOIN likes ON posts.id = likes.post_id
+    LEFT JOIN comments c ON posts.id = c.post_id AND c.status = 'active'
     WHERE posts.club_id = ? AND posts.status = 'active'
     GROUP BY posts.id
     ORDER BY posts.created_at DESC
@@ -138,11 +142,13 @@ router.get("/feed", verifyToken, (req, res) => {
     SELECT
       posts.*,
       clubs.club_name,
-      COUNT(likes.id) AS like_count
+      COUNT(DISTINCT likes.id) AS like_count,
+      COUNT(DISTINCT c.id) AS comment_count
     FROM posts
     JOIN clubs ON posts.club_id = clubs.id
     JOIN followers ON posts.club_id = followers.club_id
     LEFT JOIN likes ON posts.id = likes.post_id
+    LEFT JOIN comments c ON posts.id = c.post_id AND c.status = 'active'
     WHERE followers.user_id = ? AND posts.status = 'active'
     GROUP BY posts.id
     ORDER BY posts.created_at DESC

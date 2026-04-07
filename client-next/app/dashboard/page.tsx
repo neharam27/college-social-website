@@ -7,25 +7,27 @@ import axios from "axios"
 import api from "@/lib/api"
 import Layout from "@/components/Layout"
 import { toast } from "react-hot-toast"
+import PollCard, { Poll } from "@/components/PollCard"
 
 interface Post {
   id: number; club_id: number; club_name: string; content: string
-  image?: string; like_count: number; created_at: string
+  image?: string; like_count: number; comment_count: number; created_at: string
 }
-interface Club { id: number; club_name: string }
+interface Club { id: number; club_name: string; follower_count: number }
 interface Comment { id: number; name: string; comment: string }
 
 export default function DashboardPage() {
-  const [posts,      setPosts]      = useState<Post[]>([])
-  const [comments,   setComments]   = useState<Record<number, Comment[]>>({})
-  const [clubs,      setClubs]      = useState<Club[]>([])
-  const [role,       setRole]       = useState("")
-  const [loading,    setLoading]    = useState(true)
-  const [followedIds, setFollowedIds] = useState<number[]>([])
-  const [likedIds,   setLikedIds]   = useState<number[]>([])
+  const [posts,        setPosts]        = useState<Post[]>([])
+  const [comments,     setComments]     = useState<Record<number, Comment[]>>({})
+  const [clubs,        setClubs]        = useState<Club[]>([])
+  const [role,         setRole]         = useState("")
+  const [loading,      setLoading]      = useState(true)
+  const [followedIds,  setFollowedIds]  = useState<number[]>([])
+  const [likedIds,     setLikedIds]     = useState<number[]>([])
+  const [bookmarkedIds, setBookmarkedIds] = useState<number[]>([])
+  const [bookmarking,  setBookmarking]  = useState<number | null>(null)
+  const [polls,        setPolls]        = useState<Poll[]>([])
   const router = useRouter()
-
-  // auth headers are handled automatically by the api interceptor
 
   const fetchAll = async () => {
     // Load clubs (public — no auth needed)
@@ -33,35 +35,48 @@ export default function DashboardPage() {
       .then(r => setClubs(r.data))
       .catch(() => {})
 
-    // Load followed club IDs (auto-refreshes token if expired)
+    // Load recent active polls
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null
+    axios.get("http://localhost:5000/api/polls/all", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    }).then(r => {
+      const active = (r.data as Poll[]).filter(
+        p => p.status === "active" && (!p.ends_at || new Date(p.ends_at) > new Date())
+      ).slice(0, 3)
+      setPolls(active)
+    }).catch(() => {})
+
+    // Load followed club IDs
     try {
       const followedRes = await api.get("/followers/my")
       const ids: number[] = followedRes.data.map((f: { club_id: number }) => f.club_id)
       setFollowedIds(ids)
 
       if (ids.length > 0) {
-        // Personalized feed
         try {
           const feedRes = await api.get("/posts/feed")
           setPosts(feedRes.data)
         } catch { setPosts([]) }
       } else {
-        // Discovery feed — show all posts
         try {
           const allRes = await axios.get("http://localhost:5000/api/posts/all")
           setPosts(allRes.data)
         } catch { setPosts([]) }
       }
     } catch {
-      // Not logged in — show all posts publicly
       try {
         const allRes = await axios.get("http://localhost:5000/api/posts/all")
         setPosts(allRes.data)
       } catch { setPosts([]) }
     }
-    // Also fetch which posts the user has already liked
+
+    // Fetch liked + bookmarked post IDs in parallel
     api.get("/likes/my")
       .then(r => { if (Array.isArray(r.data)) setLikedIds(r.data) })
+      .catch(() => {})
+
+    api.get("/bookmarks/my-ids")
+      .then(r => { if (Array.isArray(r.data)) setBookmarkedIds(r.data) })
       .catch(() => {})
 
     setLoading(false)
@@ -69,7 +84,6 @@ export default function DashboardPage() {
 
   const handleLike = async (postId: number) => {
     const alreadyLiked = likedIds.includes(postId)
-    // Optimistic update
     if (alreadyLiked) {
       setLikedIds(prev => prev.filter(id => id !== postId))
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: p.like_count - 1 } : p))
@@ -84,7 +98,6 @@ export default function DashboardPage() {
         await api.post("/likes/like", { post_id: postId })
       }
     } catch {
-      // Revert optimistic update on failure
       if (alreadyLiked) {
         setLikedIds(prev => [...prev, postId])
         setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: p.like_count + 1 } : p))
@@ -94,11 +107,41 @@ export default function DashboardPage() {
       }
     }
   }
+
+  const handleBookmark = async (postId: number) => {
+    if (bookmarking === postId) return
+    const alreadyBookmarked = bookmarkedIds.includes(postId)
+    setBookmarking(postId)
+    // Optimistic update
+    if (alreadyBookmarked) {
+      setBookmarkedIds(prev => prev.filter(id => id !== postId))
+    } else {
+      setBookmarkedIds(prev => [...prev, postId])
+    }
+    try {
+      const res = await api.post("/bookmarks/save", { post_id: postId })
+      if (res.data.bookmarked) {
+        toast.success("Saved to bookmarks 📌")
+      } else {
+        toast("Bookmark removed", { icon: "🗂️" })
+      }
+    } catch {
+      // Revert
+      if (alreadyBookmarked) {
+        setBookmarkedIds(prev => [...prev, postId])
+      } else {
+        setBookmarkedIds(prev => prev.filter(id => id !== postId))
+      }
+      toast.error("Login required to bookmark")
+    } finally {
+      setBookmarking(null)
+    }
+  }
+
   const handleFollow = async (clubId: number) => {
     try {
       await api.post("/followers/follow", { club_id: clubId })
       toast.success("Following! 🎉")
-      // Optimistically update state immediately
       setFollowedIds(prev => [...prev, clubId])
       fetchAll()
     } catch { toast.error("Already following") }
@@ -107,7 +150,6 @@ export default function DashboardPage() {
     try {
       await api.post("/followers/unfollow", { club_id: clubId })
       toast.success("Unfollowed ❌")
-      // Optimistically update state immediately
       setFollowedIds(prev => prev.filter(id => id !== clubId))
       fetchAll()
     } catch { toast.error("Error") }
@@ -128,13 +170,13 @@ export default function DashboardPage() {
     if (!text.trim()) return
     try {
       await api.post("/comments/add", { post_id: postId, comment: text })
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p))
       fetchComments(postId)
     } catch { /* silent */ }
   }
 
   useEffect(() => {
     fetchAll()
-    // Read role from saved user object (token() helper removed)
     try {
       const saved = localStorage.getItem("user")
       if (saved) setRole(JSON.parse(saved).role || "")
@@ -169,24 +211,29 @@ export default function DashboardPage() {
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
           {clubs.map((club, i) => {
             const following = followedIds.includes(club.id)
-            const colors = ["from-indigo-500 to-violet-600","from-pink-500 to-rose-500","from-emerald-500 to-teal-600","from-amber-400 to-orange-500","from-sky-500 to-blue-600"]
-            const c = colors[i % colors.length]
+            const colors = ["from-indigo-500 to-violet-600","from-pink-500 to-rose-500","from-emerald-500 to-teal-600","from-amber-400 to-orange-500","from-sky-500 to-blue-600","from-violet-500 to-purple-600","from-cyan-500 to-blue-600","from-fuchsia-500 to-pink-600"]
+            const c = colors[(club.id - 1) % colors.length]
             return (
               <div
                 key={club.id}
-                className={`animate-fadeInUp delay-${Math.min(i * 50, 300)} bg-white rounded-2xl border border-slate-100 p-4 hover:shadow-md transition-all duration-200 flex flex-col gap-3`}
+                className={`animate-fadeInUp delay-${Math.min(i * 50, 300)} club-card bg-white rounded-2xl border border-slate-100 p-4 flex flex-col gap-2 cursor-pointer group`}
+                onClick={() => router.push(`/club/${club.id}`)}
               >
-                <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${c} flex items-center justify-center text-white font-bold text-sm`}>
-                  {club.club_name[0]}
+                <div className="flex items-start justify-between">
+                  <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${c} flex items-center justify-center text-white font-bold text-sm shadow-sm`}>
+                    {club.club_name[0]}
+                  </div>
+                  <span className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-0.5 transition-all text-sm">→</span>
                 </div>
-                <p
-                  className="text-sm font-semibold text-slate-800 cursor-pointer hover:text-indigo-600 transition-colors leading-tight"
-                  onClick={() => router.push(`/club/${club.id}`)}
-                >
+                <p className="text-sm font-semibold text-slate-800 group-hover:text-indigo-600 transition-colors leading-tight">
                   {club.club_name}
                 </p>
+                <div className="flex items-center gap-1 text-xs text-slate-400">
+                  <span>👥</span>
+                  <span>{club.follower_count ?? 0} member{(club.follower_count ?? 0) !== 1 ? "s" : ""}</span>
+                </div>
                 <button
-                  onClick={() => following ? handleUnfollow(club.id) : handleFollow(club.id)}
+                  onClick={(e) => { e.stopPropagation(); following ? handleUnfollow(club.id) : handleFollow(club.id) }}
                   className={`w-full py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 ${
                     following
                       ? "bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-600"
@@ -200,6 +247,36 @@ export default function DashboardPage() {
           })}
         </div>
       </section>
+
+      {/* ACTIVE POLLS STRIP */}
+      {polls.length > 0 && (
+        <section className="mb-8 animate-fadeInUp delay-75">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-widest">
+              🗳️ Active Polls
+            </h2>
+            <button
+              onClick={() => router.push("/polls")}
+              className="text-xs text-indigo-600 hover:text-indigo-700 font-semibold transition-colors"
+            >
+              See all →
+            </button>
+          </div>
+          <div className={`grid gap-4 ${polls.length === 1 ? "grid-cols-1 max-w-md" : polls.length === 2 ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1 lg:grid-cols-3"}`}>
+            {polls.map((poll, i) => (
+              <div key={poll.id} className={`animate-fadeInUp delay-${i * 75}`}>
+                <PollCard
+                  poll={poll}
+                  compact
+                  onPollUpdate={updated =>
+                    setPolls(prev => prev.map(p => p.id === updated.id ? updated : p))
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* FEED */}
       <section className="animate-fadeInUp delay-100">
@@ -222,7 +299,7 @@ export default function DashboardPage() {
             {posts.map((post, i) => (
               <div
                 key={post.id}
-                className={`post-card animate-fadeInUp delay-${Math.min(i * 50, 300)} bg-white rounded-2xl border border-slate-100 overflow-hidden`}
+                className={`post-card animate-fadeInUp delay-${Math.min(i * 50, 300)} bg-white rounded-2xl border border-slate-100 overflow-hidden relative`}
               >
                 {/* Card header */}
                 <div className="px-5 pt-5 flex items-start justify-between">
@@ -237,13 +314,25 @@ export default function DashboardPage() {
                       {formatDistanceToNow(new Date(post.created_at), { addSuffix: true })}
                     </p>
                   </div>
-                  {role === "club_admin" && (
+                  <div className="flex items-center gap-2">
+                    {/* Bookmark button */}
                     <button
-                      onClick={() => handleDelete(post.id)}
-                      className="text-slate-300 hover:text-red-500 transition-colors text-sm"
-                      title="Delete post"
-                    >✕</button>
-                  )}
+                      onClick={() => handleBookmark(post.id)}
+                      title={bookmarkedIds.includes(post.id) ? "Remove bookmark" : "Save post"}
+                      className={`transition-all duration-200 text-base ${
+                        bookmarking === post.id ? "opacity-50 scale-90" : "hover:scale-110"
+                      } ${bookmarkedIds.includes(post.id) ? "text-amber-500" : "text-slate-300 hover:text-amber-400"}`}
+                    >
+                      {bookmarkedIds.includes(post.id) ? "🔖" : "🏷️"}
+                    </button>
+                    {role === "club_admin" && (
+                      <button
+                        onClick={() => handleDelete(post.id)}
+                        className="text-slate-300 hover:text-red-500 transition-colors text-sm"
+                        title="Delete post"
+                      >✕</button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Image */}
@@ -274,7 +363,8 @@ export default function DashboardPage() {
                       onClick={() => fetchComments(post.id)}
                       className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-indigo-600 transition-colors"
                     >
-                      <span>💬</span> Comments
+                      <span>💬</span>
+                      <span>{post.comment_count > 0 ? post.comment_count : ""} Comment{post.comment_count !== 1 ? "s" : ""}</span>
                     </button>
                   </div>
 

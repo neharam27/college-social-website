@@ -319,6 +319,25 @@ body {
 .post-card:hover::after { opacity: 1; }
 
 /* ─────────────────────────────────────────────────
+   POLL CARD
+───────────────────────────────────────────────── */
+.poll-card {
+  transition: transform var(--transition), box-shadow var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+.poll-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+[data-theme="dark"] .poll-card {
+  box-shadow: var(--shadow-sm), var(--card-glow) !important;
+}
+[data-theme="dark"] .poll-card:hover {
+  box-shadow: var(--shadow-md), 0 0 0 1px rgba(139,92,246,0.2) !important;
+}
+
+
+/* ─────────────────────────────────────────────────
    INPUT
 ───────────────────────────────────────────────── */
 .input-primary {
